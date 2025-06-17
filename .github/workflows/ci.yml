@@ -1,0 +1,59 @@
+name: CI
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+    - name: Install packages
+      run: yarn install --frozen-lockfile
+    - name: Type check
+      run: yarn type-check
+    - name: Test
+      run: yarn test --testPathIgnorePatterns 'MinecraftServer'
+    - name: Build
+      run: yarn build
+
+  generate-version-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.generate.outputs.matrix }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: oven-sh/setup-bun@v2
+    - name: Install mineflayer
+      run: bun add mineflayer@latest
+    - name: Generate version matrix
+      id: generate
+      run: bun run tests/versionMatrix.ts
+
+  server:
+    runs-on: ubuntu-latest
+    needs: [generate-version-matrix]
+    timeout-minutes: 5
+    strategy:
+      matrix: ${{ fromJson(needs.generate-version-matrix.outputs.matrix) }}
+      fail-fast: false
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22.x'
+    - name: Setup Java JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: ${{ matrix.javaVersion }}
+        java-package: jdk
+    - name: Install packages
+      run: yarn install --frozen-lockfile
+    - name: Test
+      run: yarn test -t 'MinecraftServer'
+      env:
+        MC_VERSION: ${{ matrix.mcVersion }}

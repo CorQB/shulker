@@ -1,5 +1,7 @@
 import fs from 'fs'
 import path from 'path'
+import type { Server } from 'http'
+
 import { Tail } from 'tail'
 import express from 'express'
 
@@ -10,6 +12,7 @@ import { fixMinecraftUsername } from './lib/util'
 export type LogLine = {
   username: string
   message: string
+  type: 'chat' | 'connection' | 'server' | 'advancement' | 'death' | 'me'
 } | null
 
 type Callback = (data: LogLine) => void
@@ -18,6 +21,7 @@ class MinecraftHandler {
   config: Config
 
   app: express.Application
+  server?: Server
   tail: Tail
 
   constructor(config: Config) {
@@ -49,7 +53,11 @@ class MinecraftHandler {
       return null
     }
 
-    const logLine = logLineData[1]
+    let logLine = logLineData[1]
+
+    if (logLine.startsWith('[Not Secure] ')) {
+      logLine = logLine.substring(13)
+    }
 
     // the username used for server messages
     const serverUsername = `${this.config.SERVER_NAME} - Server`
@@ -73,7 +81,7 @@ class MinecraftHandler {
         console.log('[DEBUG] Username: ' + matches[1])
         console.log('[DEBUG] Text: ' + matches[2])
       }
-      return { username, message }
+      return { username, message, type: 'chat' }
     } else if (
       this.config.SHOW_PLAYER_CONN_STAT && (
         logLine.includes('left the game') ||
@@ -85,30 +93,30 @@ class MinecraftHandler {
         console.log(`[DEBUG] A player's connection status changed`)
       }
 
-      return { username: serverUsername, message: logLine }
+      return { username: serverUsername, message: logLine, type: 'connection' }
     } else if (this.config.SHOW_SERVER_STATUS && (logLine.includes('Starting minecraft server'))) {
         if (this.config.DEBUG) {
           console.log('[DEBUG] Server has started')
         }
-        return { username: serverUsername, message: 'Server is online' }
+        return { username: serverUsername, message: 'Server is online', type: 'server' }
     } else if (this.config.SHOW_SERVER_STATUS && (logLine.includes('Stopping the server'))) {
         if (this.config.DEBUG) {
           console.log('[DEBUG] Server has stopped')
         }
-        return { username: serverUsername, message: 'Server is offline' }
+        return { username: serverUsername, message: 'Server is offline', type: 'server' }
     } else if (this.config.SHOW_PLAYER_ADVANCEMENT && logLine.includes('made the advancement')) {
       // handle advancements
       if (this.config.DEBUG){
         console.log('[DEBUG] A player has made an advancement')
       }
-      return { username: `${this.config.SERVER_NAME} - Server`, message: logLine }
+      return { username: `${this.config.SERVER_NAME} - Server`, message: logLine, type: 'advancement' }
     } else if (this.config.SHOW_PLAYER_ME && logLine.startsWith('* ')) {
       // /me commands have the bolded name and the action they did
-      const usernameMatch = data.match(/: \* ([a-zA-Z0-9_]{1,16}) (.*)/)
+      const usernameMatch = logLine.match(/^\* ([a-zA-Z0-9_]{1,16}) (.*)/)
       if (usernameMatch) {
         const username = usernameMatch[1]
         const rest = usernameMatch[2]
-        return { username: serverUsername, message: `**${username}** ${rest}` }
+        return { username: serverUsername, message: `**${username}** ${rest}`, type: 'me' }
       }
     } else if (this.config.SHOW_PLAYER_DEATH) {
       const deathMessageRegex = new RegExp(this.config.REGEX_DEATH_MESSAGE ?? '^[\\w_]+ died')
@@ -118,7 +126,7 @@ class MinecraftHandler {
         if (this.config.DEBUG) {
           console.log(`[DEBUG] A player died. Matched on "${deathMessageMatch[1]}"`)
         }
-        return { username: serverUsername, message: logLine }
+        return { username: serverUsername, message: logLine, type: 'death' }
       }
     }
 
@@ -152,7 +160,7 @@ class MinecraftHandler {
 
     const port: number = Number(process.env.PORT) || this.config.PORT
 
-    this.app.listen(port, () => {
+    this.server = this.app.listen(port, () => {
       console.log('[INFO] Bot listening on *:' + port)
 
       if (!this.config.IS_LOCAL_FILE && this.config.SHOW_INIT_MESSAGE) {
@@ -201,6 +209,11 @@ class MinecraftHandler {
     this.tail.on('error', (error: any) => {
       console.log('[ERROR] Error tailing log file: ' + error)
     })
+  }
+
+  public _teardown() {
+    if (this.config.IS_LOCAL_FILE) this.tail.unwatch()
+    else if (this.server) this.server.close()
   }
 
   public init (callback: Callback) {
