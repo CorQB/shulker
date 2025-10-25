@@ -7,8 +7,10 @@
 [Unit]
 Description=Shulker - A Minecraft Server Discord Listener
 After=network.target
+Wants=network.target
 
 [Service]
+ExecStartPre=/bin/sh -c 'until host example.com; do sleep 1; done'
 ExecStart=/usr/bin/npm start
 Restart=always
 User= ## User that will run the service
