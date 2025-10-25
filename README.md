@@ -62,6 +62,7 @@ Edit shulker.service.example file to match your environment variables (note .ser
 
 ```
 [Service]
+ExecStartPre=/bin/sh -c 'until host example.com; do sleep 1; done'
 ExecStart=/usr/bin/npm start
 Restart=always
 User=USER **Replace with user that will run the service**
